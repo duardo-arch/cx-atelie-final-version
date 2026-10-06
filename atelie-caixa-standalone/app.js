@@ -1090,8 +1090,12 @@ function OrcamentosTab(props) {
   function salvar() {
     if (!validar()) return;
     if (editingId) {
+      var jaConfirmado = orcamentos.find(function (o) { return o.id === editingId; });
+      var ligadoAoCaixa = jaConfirmado && jaConfirmado.status === "confirmado" && jaConfirmado.confirmedTxId;
       setConfirm({
-        message: "Confirma as alterações neste orçamento?",
+        message: ligadoAoCaixa
+          ? "Confirma as alterações neste orçamento? Como ele já foi lançado no caixa, o lançamento correspondente também será atualizado (itens, valor e estoque)."
+          : "Confirma as alterações neste orçamento?",
         confirmLabel: "Salvar alterações",
         onConfirm: function () { doSalvar(); setConfirm(null); }
       });
@@ -1108,6 +1112,25 @@ function OrcamentosTab(props) {
       atualizado.confirmedAt = old ? old.confirmedAt : null;
       atualizado.confirmedTxId = old ? old.confirmedTxId : null;
       persistOrcamentos(orcamentos.map(function (o) { return o.id === editingId ? atualizado : o; }));
+
+      // se esse orçamento já tinha sido lançado no caixa, atualiza o lançamento vinculado também
+      if (old && old.status === "confirmado" && old.confirmedTxId) {
+        var oldTx = transactions.find(function (t) { return t.id === old.confirmedTxId; });
+        if (oldTx) {
+          var client = clients.find(function (c) { return c.name === atualizado.clientName; });
+          var afterRevert = applyStockEffectsForItems(products, oldTx.items || [], 1);
+          var afterApply = applyStockEffectsForItems(afterRevert, atualizado.items, -1);
+          persistProducts(afterApply);
+          var novaTx = Object.assign({}, oldTx, {
+            description: atualizado.items.map(function (it) { return it.description; }).join(" + "),
+            value: atualizado.total,
+            items: atualizado.items,
+            clientId: client ? client.id : null,
+            clientName: atualizado.clientName
+          });
+          persistTx(transactions.map(function (t) { return t.id === oldTx.id ? novaTx : t; }));
+        }
+      }
     } else {
       persistOrcamentos([buildOrcamento()].concat(orcamentos));
     }
@@ -1188,6 +1211,10 @@ function OrcamentosTab(props) {
         e("div", { className: "card-title", style: { marginBottom: 0 } }, Icon("🧾", 16), " " + (editingId ? "Editando orçamento" : "Novo orçamento")),
         editingId ? e("button", { type: "button", className: "btn btn-outline btn-sm", onClick: resetDraft }, "Cancelar edição") : null
       ),
+      editingId && (function () {
+        var o = orcamentos.find(function (x) { return x.id === editingId; });
+        return o && o.status === "confirmado";
+      })() ? e("div", { className: "form-hint" }, "⚠️ Esse orçamento já foi lançado no caixa. Ao salvar, o lançamento correspondente também será atualizado.") : null,
       e(Field, { label: "Cliente (opcional)" },
         e("input", { list: "clientes-lista", value: clientName, onChange: function (ev) { setClientName(ev.target.value); }, placeholder: "Nome do cliente" })
       ),
